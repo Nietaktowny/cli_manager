@@ -1,0 +1,12 @@
+{
+	"name": "cli_manager",
+	"version": "1.0.0",
+	"keywords": "keyword",
+	"description": "Library used to control ESP32 board with CLI.",
+	"dependencies": {
+        "nietaktowny/err_controller": "^1.0.2",
+		"nietaktowny/wifi_controller": "^1.1.6"
+    },
+	"frameworks": ["*"],
+	"platforms": ["*"]
+}

@@ -23,38 +23,10 @@ static EventGroupHandle_t tcp_event_group;
 static char receive_buffer[TCP_C_RECEIVE_BUFLEN];
 static char send_buffer[TCP_C_SEND_BUFLEN];
 
-static void cli_set_sta_ssid(void) {
-    memset(send_buffer, 0, sizeof(send_buffer));
-    ESP_LOGI(TAG, "TODO set sta SSID.");
-    memcpy(send_buffer, "TODO set sta SSID.", strlen("TODO set sta SSID."));
-}
-
-static void cli_set_sta_password(void) {
-    memset(send_buffer, 0, sizeof(send_buffer));
-    ESP_LOGI(TAG, "TODO set sta password.");
-    memcpy(send_buffer, "TODO set sta password.", strlen("TODO set sta password."));
-}
-
 static void cli_no_command(void) {
-    memset(send_buffer, 0, sizeof(send_buffer));
     ESP_LOGI(TAG, "No command found");
-    memcpy(send_buffer, "No command found", strlen("No command found"));
-    xEventGroupSetBits(tcp_event_group, TCP_C_DATA_READY_TO_SEND);
-}
-
-static void cli_do_scan(void) {
-    wifi_c_scan_result_t scan_result;
-    char temp_buf[312];
-    wifi_c_scan_all_ap(&scan_result);
-
-    memset(send_buffer, 0, sizeof(send_buffer));
-    memset(temp_buf, 0, sizeof(temp_buf));
-
-    strcat(&send_buffer[0], "Scanned APs:");
-    wifi_c_store_scanned_ap(temp_buf, 312);
-
-    strncat(&send_buffer[12], &temp_buf[0], strlen(temp_buf));
-    xEventGroupSetBits(tcp_event_group, TCP_C_DATA_READY_TO_SEND);
+    cli_manager_log("No command found");
+    cli_manager_end_transmission();
 }
 
 static cli_cmd_t cli_read_cmd(const char recbuf[]) {
@@ -66,7 +38,23 @@ static cli_cmd_t cli_read_cmd(const char recbuf[]) {
     return cmd;
 }
 
-int cli_manager_register_command(char cmd1, char cmd2, char args[64], void (*cmd_fun)(void)) {
+int cli_manager_end_transmission(void) {
+    xEventGroupSetBits(tcp_event_group, TCP_C_DATA_READY_TO_SEND);
+    return 0;
+}
+
+int cli_manager_log(char* log) {
+    cli_manager_write_to_send_buf(log, (uint16_t) strlen(log));
+    return 0;
+}
+
+int cli_manager_add_log(char* log) {
+    cli_manager_add_to_send_buf("\n");
+    cli_manager_add_to_send_buf(log);
+    return 0;
+}
+
+int cli_manager_register_command(char cmd1, char cmd2, void (*cmd_fun)(void* args)) {
     err_c_t err = ERR_C_OK;
 
     if(last_cmd < CLI_CMD_MAX_COMMANDS) {
@@ -74,8 +62,6 @@ int cli_manager_register_command(char cmd1, char cmd2, char args[64], void (*cmd
         new_cmd.cmd_fun = cmd_fun;
         new_cmd.cmd_num[0] = cmd1;
         new_cmd.cmd_num[1] = cmd2;
-        if(args != NULL)
-            memcpy(&new_cmd.args, &args, sizeof(new_cmd.args));
         cmd_configs[last_cmd] = new_cmd;
         last_cmd++;
     } else {
@@ -90,7 +76,7 @@ static void cli_do_cmd(cli_cmd_t* cmd) {
     {
         if(cmd->cmd_num[0] == cmd_configs[i].cmd_num[0] && cmd->cmd_num[1] == cmd_configs[i].cmd_num[1]) {
             found_one = true;
-            cmd_configs[i].cmd_fun();
+            cmd_configs[i].cmd_fun((void*)(&cmd->args));
         }
     }
     if (found_one == false)
@@ -108,32 +94,68 @@ void cli_manager_task(void* args) {
     while(1) {
         xEventGroupWaitBits(tcp_event_group, TCP_C_ACCEPTED_SOCKET_BIT, pdTRUE, pdFALSE, portMAX_DELAY);
         tcp_c_receive(receive_buffer);
+        xEventGroupWaitBits(tcp_event_group, TCP_C_RECEIVED_DATA_BIT, pdTRUE, pdFALSE, pdTICKS_TO_MS(2000));
         ESP_LOGD(TAG, "%s", receive_buffer);
 
         cmd = cli_read_cmd(receive_buffer);
         cli_do_cmd(&cmd);
         ESP_LOGD(TAG, "Data to send: %s", send_buffer);
 
-        xEventGroupWaitBits(tcp_event_group, TCP_C_DATA_READY_TO_SEND, pdTRUE, pdFALSE, pdMS_TO_TICKS(4000));
-        //memcpy(send_buffer, receive_buffer, sizeof(receive_buffer));
+        xEventGroupWaitBits(tcp_event_group, TCP_C_DATA_READY_TO_SEND, pdTRUE, pdFALSE, pdMS_TO_TICKS(3500));
+
         tcp_c_send(send_buffer, strlen(send_buffer));
+        xEventGroupWaitBits(tcp_event_group, TCP_C_SENDED_DATA_BIT, pdTRUE, pdFALSE, pdMS_TO_TICKS(2000));
         xEventGroupSetBits(tcp_event_group, TCP_C_FINISHED_TRANSMISSION);
     }
+}
+
+int cli_manager_add_to_send_buf(const char* to_write) {
+    assert(to_write);
+    int16_t len = (int16_t) strlen(to_write);
+    int16_t send_len = (int16_t) strlen(send_buffer);
+
+    memcpy(&send_buffer[send_len], to_write, len);
+
+    return 0;
+}
+
+int cli_manager_write_to_send_buf(const char to_write[], uint16_t to_write_len) {
+    err_c_t err = ERR_C_OK;
+    if(to_write_len >= TCP_C_SEND_BUFLEN) {
+        return 1;
+    }
+
+    assert(to_write);
+    memset(send_buffer, 0, sizeof(send_buffer));
+    memcpy(send_buffer, to_write, to_write_len);
+
+    return err;
+}
+
+int cli_manager_read_from_rec_buf(char space_to_read[], uint16_t space_to_read_len) {
+    err_c_t err = ERR_C_OK;
+    int len = (int) strlen(receive_buffer);
+    if(space_to_read_len < len) {
+        return 1;
+    }
+
+    assert(space_to_read);
+
+    memcpy(space_to_read, receive_buffer, len);
+
+    return err;
 }
 
 int cli_manager_init(void) {
     tcp_event_group = xEventGroupCreate();
 
-    wifi_c_init_wifi(WIFI_C_MODE_STA);
+    wifi_c_init_wifi(WIFI_C_MODE_APSTA);
     wifi_c_start_sta(MY_SSID, MY_PSK);
+    wifi_c_start_ap("ESP32", "esp32");
     
     tcp_c_start_tcp_server(tcp_event_group);
 
-    xTaskCreate(tcp_server_listen_task, "tcp_task", 2048, NULL, 2, NULL);
-    xTaskCreate(cli_manager_task, "cli_task", 2048, NULL, 3, NULL);
-
-    cli_manager_register_command('1', '0', NULL, cli_do_scan);
-    cli_manager_register_command('2', '0', NULL, cli_set_sta_ssid);
-    cli_manager_register_command('3', '0', NULL, cli_set_sta_password);
-    return ERR_C_OK;
+    xTaskCreate(tcp_server_listen_task, "tcp_task", 4096, NULL, 3, NULL);
+    xTaskCreate(cli_manager_task, "cli_task", 4096, NULL, 2, NULL);
+    return 0;
 }

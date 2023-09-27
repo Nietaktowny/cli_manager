@@ -4,8 +4,8 @@
 	"keywords": "keyword",
 	"description": "Library used to control ESP32 board with CLI.",
 	"dependencies": {
-        "nietaktowny/err_controller": "^1.0.2",
-		"nietaktowny/wifi_controller": "^1.1.6"
+        "nietaktowny/err_controller":"^1.0.2",
+		"nietaktowny/wifi_controller":"https://github.com/Nietaktowny/wifi_controller/archive/refs/heads/develop.zip"
     },
 	"frameworks": ["*"],
 	"platforms": ["*"]
